@@ -4,11 +4,23 @@ libuiohook
 A multi-platform C library to provide global input/ouput hooking from userland.
 
 ## Compiling
-Prerequisites: autotools, pkg-config, libtool, gcc, clang or msys2/mingw32
+Prerequisites: pkg-config, libtool, gcc, clang or msys2/mingw32
+
+### With autotools
+Other prerequisites: autotools
 
     ./bootstrap.sh
     ./configure
     make && make install
+
+
+### With CMake
+Other prerequisites: cmake
+
+From the desired build directory:
+
+    cmake /path/to/the/source/directory
+    make
 
 ## Useage
 * [Hook Demo](https://github.com/kwhat/libuiohook/blob/master/src/demo_hook.c)
