@@ -1,5 +1,6 @@
 Christian Frisson <christian.frisson@gmail.com>
 	CMake integration
+	Apps logging to text files: src/app_hook_async_log.c src/app_properties_log.c
 
 Alexander Barker <alex@1stleg.com>
 

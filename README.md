@@ -23,6 +23,8 @@ From the desired build directory:
     make
 
 ## Useage
+* [Hook Async Log App](https://github.com/ChristianFrisson/libuiohook/blob/log_apps/src/app_hook_async_log.c)
+* [Properties Log App](https://github.com/ChristianFrisson/libuiohook/blob/log_apps/src/app_properties_log.c)
 * [Hook Demo](https://github.com/kwhat/libuiohook/blob/master/src/demo_hook.c)
 * [Async Hook Demo](https://github.com/kwhat/libuiohook/blob/master/src/demo_hook_async.c)
 * [Event Post Demo](https://github.com/kwhat/libuiohook/blob/master/src/demo_post.c)
