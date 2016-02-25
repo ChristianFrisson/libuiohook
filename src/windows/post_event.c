@@ -24,6 +24,7 @@
 #include <uiohook.h>
 #include <windows.h>
 
+#include "input_helper.h"
 #include "logger.h"
 
 // Some buggy versions of MinGW and MSys do not include these constants in winuser.h.
@@ -116,6 +117,7 @@ UIOHOOK_API void hook_post_event(uiohook_event * const event) {
 		events_size++;
 	}
 
+
 	switch (event->type) {
 		case EVENT_KEY_PRESSED:
 			events[events_size].type = INPUT_KEYBOARD;
@@ -124,8 +126,9 @@ UIOHOOK_API void hook_post_event(uiohook_event * const event) {
 			events[events_size].ki.wScan = event->data.keyboard.keycode;
 			events[events_size].ki.dwFlags = KEYEVENTF_SCANCODE;
 
-			if ((events[events_size].ki.wVk >= 33 && events[events_size].ki.wVk <= 46) ||
-					(events[events_size].ki.wVk >= 91 && events[events_size].ki.wVk <= 93)) {
+			if (events[events_size].ki.wVk & 0xE000
+					|| (events[events_size].ki.wVk >= 33 && events[events_size].ki.wVk <= 46)
+					|| (events[events_size].ki.wVk >= 91 && events[events_size].ki.wVk <= 93)) {
 
 				// Key is an extended key.
 				events[events_size].ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
@@ -142,8 +145,10 @@ UIOHOOK_API void hook_post_event(uiohook_event * const event) {
 			events[events_size].ki.wScan = event->data.keyboard.keycode;
 			events[events_size].ki.dwFlags |= KEYEVENTF_SCANCODE;
 
-			if ((events[events_size].ki.wVk >= 33 && events[events_size].ki.wVk <= 46) ||
-					(events[events_size].ki.wVk >= 91 && events[events_size].ki.wVk <= 93)) {
+			if (events[events_size].ki.wVk & 0xE000
+					|| (events[events_size].ki.wVk >= 33 && events[events_size].ki.wVk <= 46)
+					|| (events[events_size].ki.wVk >= 91 && events[events_size].ki.wVk <= 93)) {
+
 				// Key is an extended key.
 				events[events_size].ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
 			}
@@ -156,7 +161,7 @@ UIOHOOK_API void hook_post_event(uiohook_event * const event) {
 		case EVENT_MOUSE_PRESSED:
 			events[events_size].type = INPUT_MOUSE;
 			events[events_size].mi.dwFlags = MOUSEEVENTF_XDOWN;
-			
+
 			switch (event->data.mouse.button) {
 				case MOUSE_BUTTON1:
 					events[events_size].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
@@ -190,6 +195,7 @@ UIOHOOK_API void hook_post_event(uiohook_event * const event) {
 
 			events[events_size].mi.dwFlags |= MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
 			events[events_size].mi.time = 0; // GetSystemTime()
+
 			events_size++;
 			break;
 			
@@ -243,7 +249,7 @@ UIOHOOK_API void hook_post_event(uiohook_event * const event) {
 			
 			events[events_size].mi.dx = event->data.wheel.x * (MAX_WINDOWS_COORD_VALUE / screen_width) + 1;
 			events[events_size].mi.dy = event->data.wheel.y * (MAX_WINDOWS_COORD_VALUE / screen_height) + 1;
-			
+
 			events[events_size].mi.dwFlags |= MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
 			events[events_size].mi.time = 0; // GetSystemTime()
 			events_size++;
@@ -332,6 +338,11 @@ UIOHOOK_API void hook_post_event(uiohook_event * const event) {
 	// Create the key release input
 	// memcpy(key_events + 1, key_events, sizeof(INPUT));
 	// key_events[1].ki.dwFlags |= KEYEVENTF_KEYUP;
+
+	for (int i = 0; i < events_size; i++) {
+		logger(LOG_LEVEL_WARN, "%s [%u]: TEST Type: %#X\n",
+    		__FUNCTION__, __LINE__, events[i].type);
+	}
 
 	if (! SendInput(events_size, events, sizeof(INPUT)) ) {
 		logger(LOG_LEVEL_ERROR, "%s [%u]: SendInput() failed! (%#lX)\n",

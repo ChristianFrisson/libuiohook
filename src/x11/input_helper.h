@@ -55,6 +55,13 @@ extern screen_data* hook_create_screen_info(uint8_t *count);
  */
 extern size_t keysym_to_unicode(KeySym keysym, wchar_t *buffer, size_t size);
 
+#ifdef USE_XKBCOMMON
+/* Converts an X11 key code to a Unicode character sequence.  libXKBCommon support
+ * is required for this method.
+ */
+extern size_t keycode_to_unicode(KeyCode keycode, wchar_t *buffer, size_t size);
+#endif
+
 /* Convert a single Unicode character to an X11 key symbol.  This function
  * provides a better translation than XStringToKeysym() for Unicode characters.
  */

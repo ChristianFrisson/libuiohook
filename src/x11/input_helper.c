@@ -22,6 +22,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <X11/keysym.h>
 #include <X11/Xlib.h>
@@ -39,6 +40,27 @@ static XkbDescPtr keyboard_map;
 static KeySym *keyboard_map;
 static int keysym_per_keycode;
 static bool is_caps_lock = false, is_shift_lock = false;
+#endif
+
+#ifdef USE_XKBCOMMON
+#include <X11/Xlib-xcb.h>
+#include <xkbcommon/xkbcommon.h>
+#include <xkbcommon/xkbcommon-x11.h>
+
+#ifdef USE_XKBFILE
+#include <X11/extensions/XKBrules.h>
+
+static struct xkb_rule_names xkb_names = {
+	.rules = "base",
+	.model = "us",
+	.layout = "pc105",
+	.variant = NULL,
+	.options = NULL
+};
+#endif
+
+static xcb_connection_t *xcb_conn = NULL;
+struct xkb_context *xkb_ctx;
 #endif
 
 #include "logger.h"
@@ -1419,6 +1441,32 @@ static struct codepair {
   { 0x20AC, 0x20AC }, /*                    EuroSign € EURO SIGN */
 };
 
+
+#ifdef USE_XKBCOMMON
+static inline struct xkb_state *get_xkb_state() {
+	struct xkb_keymap *keymap;
+	struct xkb_state *state = NULL;
+
+	int32_t device_id = xkb_x11_get_core_keyboard_device_id(xcb_conn);
+	if (device_id >= 0) {
+		keymap = xkb_x11_keymap_new_from_device(xkb_ctx, xcb_conn, device_id, XKB_KEYMAP_COMPILE_NO_FLAGS);
+		state = xkb_x11_state_new_from_device(keymap, xcb_conn, device_id);
+	}
+	#ifdef USE_XKBFILE
+	else {
+		// Evdev fallback,
+		logger(LOG_LEVEL_WARN, "%s [%u]: Unable to retrieve core keyboard device id! (%d)\n",
+				__FUNCTION__, __LINE__, device_id);
+
+		keymap = xkb_keymap_new_from_names(xkb_ctx, &xkb_names, XKB_KEYMAP_COMPILE_NO_FLAGS);
+		state = xkb_state_new(keymap);
+	}
+	#endif
+
+	return state;
+}
+#endif
+
 /***********************************************************************
  * The following function converts ISO 10646-1 (UCS, Unicode) values to
  * their corresponding KeySym values.
@@ -1467,6 +1515,23 @@ KeySym unicode_to_keysym(wchar_t unicode) {
 	return unicode | 0x01000000;
 }
 
+#ifdef USE_XKBCOMMON
+size_t keycode_to_unicode(KeyCode keycode, wchar_t *buffer, size_t size) {
+	char *tmpbuff = malloc(sizeof(wchar_t) * size);
+	size_t count = 0;
+
+	struct xkb_state *state = get_xkb_state();
+    if (state != NULL) {
+		count = xkb_state_key_get_utf8(state, keycode, tmpbuff, size);
+	}
+
+	count = mbstowcs(buffer, tmpbuff, count);
+    free(tmpbuff);
+
+    return count;
+}
+#endif
+
 /***********************************************************************
  * The following function converts KeySym values into the corresponding
  * ISO 10646-1 (UCS, Unicode) values.
@@ -1485,20 +1550,20 @@ KeySym unicode_to_keysym(wchar_t unicode) {
  ***********************************************************************/
 size_t keysym_to_unicode(KeySym keysym, wchar_t *buffer, size_t size) {
 	size_t count = 0;
-	
+
 	int min = 0;
 	int max = sizeof(keysym_unicode_table) / sizeof(struct codepair) - 1;
 	int mid;
 
 	#ifdef XK_LATIN1
-    // First check for Latin-1 characters. (1:1 mapping)
-	if ((keysym >= 0x0020 && keysym <= 0x007E) 
+	// First check for Latin-1 characters. (1:1 mapping)
+	if ((keysym >= 0x0020 && keysym <= 0x007E)
 			|| (keysym >= 0x00A0 && keysym <= 0x00FF)) {
-		
+
 		if (count < size) {
 			buffer[count++] = keysym;
 		}
-		
+
 		return count;
 	}
 	#endif
@@ -1508,17 +1573,17 @@ size_t keysym_to_unicode(KeySym keysym, wchar_t *buffer, size_t size) {
 		defined(XK_ARMENIAN) || defined(XK_GEORGIAN) || defined(XK_CAUCASUS) || \
 		defined(XK_VIETNAMESE) || defined(XK_CURRENCY) || \
 		defined(XK_MATHEMATICAL) || defined(XK_BRAILLE) || defined(XK_SINHALA)
-    if ((keysym & 0xFF000000) == 0x01000000) {
+	if ((keysym & 0xFF000000) == 0x01000000) {
 		if (count < size) {
 			buffer[count++] = keysym & 0x00FFFFFF;
 		}
-		
+
 		return count;
 	}
 	#endif
 
-    // Binary search in table.
-    while (max >= min) {
+	// Binary search in table.
+	while (max >= min) {
 		mid = (min + max) / 2;
 		if (keysym_unicode_table[mid].keysym < keysym) {
 			min = mid + 1;
@@ -1531,10 +1596,10 @@ size_t keysym_to_unicode(KeySym keysym, wchar_t *buffer, size_t size) {
 			if (count < size) {
 				buffer[count++] = keysym_unicode_table[mid].unicode;
 			}
-		
+
 			return count;
 		}
-    }
+	}
 
     // No matching Unicode value found!
     return count;
@@ -1639,7 +1704,13 @@ KeyCode scancode_to_keycode(uint16_t scancode) {
 KeySym keycode_to_keysym(KeyCode keycode, unsigned int modifier_mask) {
 	KeySym keysym = NoSymbol;
 
-	#ifdef USE_XKB
+	#if defined(USE_XKBCOMMON)
+	// TODO Make xkb a runtime dependency.
+	struct xkb_state *state = state = get_xkb_state();
+	if (state != NULL) {
+		keysym = xkb_state_key_get_one_sym(state, keycode);
+	}
+	#elif defined(USE_XKB)
 	if (keyboard_map != NULL) {
 		// Get the range and number of symbols groups bound to the key.
 		unsigned char info = XkbKeyGroupInfo(keyboard_map, keycode);
@@ -1790,7 +1861,23 @@ KeySym keycode_to_keysym(KeyCode keycode, unsigned int modifier_mask) {
 }
 
 void load_input_helper(Display *disp) {
-	#ifdef USE_XKB
+	#if defined(USE_XKBCOMMON)
+	// Open XCB Connection
+	xcb_conn = XGetXCBConnection(disp);
+	int xcb_status = xcb_connection_has_error(xcb_conn);
+	if (xcb_status <= 0) {
+		// Initialize xkbcommon context.
+		xkb_ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+		if (xkb_ctx == NULL) {
+			logger(LOG_LEVEL_ERROR,	"%s [%u]: xkb_context_new failure!\n",
+					__FUNCTION__, __LINE__);
+		}
+	}
+	else {
+		logger(LOG_LEVEL_ERROR,	"%s [%u]: xcb_connect failure! (%d)\n",
+				__FUNCTION__, __LINE__, xcb_status);
+	}
+    #elif defined(USE_XKB)
 	/* The following code block is based on vncdisplaykeymap.c under the terms:
 	 *
 	 * Copyright (C) 2008  Anthony Liguori <anthony codemonkey ws>
@@ -1897,6 +1984,12 @@ void load_input_helper(Display *disp) {
 
 void unload_input_helper() {
 	if (keyboard_map) {
+		#ifdef USE_XKBCOMMON
+		if (xcb_conn != NULL) {
+			xcb_disconnect(xcb_conn);
+		}
+		#endif
+
 		#ifdef USE_XKB
 		XkbFreeClientMap(keyboard_map, XkbAllClientInfoMask, true);
 		#if defined(USE_EVDEV) && defined(USE_XKB)
