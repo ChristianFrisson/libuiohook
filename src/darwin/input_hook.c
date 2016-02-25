@@ -610,7 +610,7 @@ static inline void process_system_key(uint64_t timestamp, CGEventRef event_ref) 
 		id event_data = objc_msgSend((id) objc_getClass("NSEvent"), sel_registerName("eventWithCGEvent:"), event_ref);
 		int subtype = (int) objc_msgSend(event_data, sel_registerName("subtype"));
 		#else
-		CFDataRef data = CGEventCreateData(kCFAllocatorDefault, event_ref);
+		CFDataRef cf_data = CGEventCreateData(kCFAllocatorDefault, event_ref);
 		//CFIndex len = CFDataGetLength(data);
 		UInt8 *buffer = malloc(12);
 		CFDataGetBytes(cf_data, CFRangeMake(108, 12), buffer);
@@ -619,6 +619,8 @@ static inline void process_system_key(uint64_t timestamp, CGEventRef event_ref) 
 		if (subtype == 8) {
 			#ifdef USE_OBJC
 			int data = (int) objc_msgSend(event_data, sel_registerName("data1"));
+			#else
+			int data = (int) buffer;
 			#endif
 
 			int key_code = (data & 0xFFFF0000) >> 16;
@@ -723,6 +725,7 @@ static inline void process_system_key(uint64_t timestamp, CGEventRef event_ref) 
 				CFRelease(ns_event);
 				CFRelease(src);
 			}
+			#ifdef NX_KEYTYPE_FAST
 			else if (key_code == NX_KEYTYPE_FAST) {
 				// It doesn't appear like we can modify the event coming in, so we will fabricate a new event.
 				CGEventSourceRef src = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
@@ -739,6 +742,8 @@ static inline void process_system_key(uint64_t timestamp, CGEventRef event_ref) 
 				CFRelease(ns_event);
 				CFRelease(src);
 			}
+			#endif
+			#ifdef NX_KEYTYPE_REWIND
 			else if (key_code == NX_KEYTYPE_REWIND) {
 				// It doesn't appear like we can modify the event coming in, so we will fabricate a new event.
 				CGEventSourceRef src = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
@@ -755,11 +760,12 @@ static inline void process_system_key(uint64_t timestamp, CGEventRef event_ref) 
 				CFRelease(ns_event);
 				CFRelease(src);
 			}
+			#endif
 		}
 
 		#ifndef USE_OBJC
 		free(buffer);
-		CFRelease(data);
+		CFRelease(cf_data);
 		#endif
 	}
 }
