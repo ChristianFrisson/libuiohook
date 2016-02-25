@@ -45,7 +45,9 @@ int main() {
     local_time = localtime (&system_time.tv_sec);
     strftime (properties_file_name, sizeof (properties_file_name), "properties-%Y-%m-%d-%H-%M-%S.txt", local_time);
 
-	// Retrieves an array of screen data for each available monitor.
+    // currently only defined for x11
+    #ifdef linux
+    // Retrieves an array of screen data for each available monitor.
     properties_file = fopen (properties_file_name, "w+");
 	uint8_t count = 0;
 	screen_data *screens = hook_create_screen_info(&count);
@@ -74,6 +76,7 @@ int main() {
 	else {
 		fprintf(stderr,	"Failed to aquire screen information!\n");
 	}
+	#endif
 
 	// Retrieves the keyboard auto repeat rate.
 	long int repeat_rate = hook_get_auto_repeat_rate();
