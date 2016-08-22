@@ -19,6 +19,7 @@ project(libuiohook)
 
 option(BUILD_SHARED_LIBS "Build libuiohook libraries as shared" OFF)
 option(USE_DEBUG "Use Debug" ON)
+option(BUILD_APPS "Build apps" OFF)
 
 ######################
 #     OS SPECIFIC    #
@@ -106,6 +107,7 @@ endif()
 #         APPS       #
 ######################
 
+if(BUILD_APPS)
 file(GLOB LIBUIOHOOK_DEMO_SRCS src/demo*.c)
 foreach(LIBUIOHOOK_DEMO_SRC ${LIBUIOHOOK_DEMO_SRCS})
 	get_filename_component(LIBUIOHOOK_DEMO ${LIBUIOHOOK_DEMO_SRC} NAME_WE)
@@ -121,4 +123,4 @@ foreach(LIBUIOHOOK_APP_SRC ${LIBUIOHOOK_APP_SRCS})
 	add_executable(${LIBUIOHOOK_APP} ${LIBUIOHOOK_APP_SRC})
 	target_link_libraries(${LIBUIOHOOK_APP} uiohook)
 endforeach()
-
+endif()
