@@ -1,5 +1,5 @@
 /* libUIOHook: Cross-platfrom userland keyboard and mouse hooking.
- * Copyright (C) 2006-2015 Alexander Barker.  All Rights Received.
+ * Copyright (C) 2006-2016 Alexander Barker.  All Rights Received.
  * https://github.com/kwhat/libuiohook/
  *
  * libUIOHook is free software: you can redistribute it and/or modify
@@ -26,7 +26,6 @@
 #include <pthread.h>
 #endif
 #include <stdint.h>
-#include <sys/time.h>
 #include <uiohook.h>
 #ifdef USE_XKB
 #include <xcb/xkb.h>
@@ -66,12 +65,23 @@ typedef struct _hook_info {
 		Display *display;
 		XRecordContext context;
 	} ctrl;
+	struct _input {
+		#ifdef USE_XKBCOMMON
+		xcb_connection_t *connection;
+		struct xkb_context *context;
+    	#endif
+		uint16_t mask;
+		struct _mouse {
+			bool is_dragged;
+			struct _click {
+				unsigned short int count;
+				long int time;
+				unsigned short int button;
+			} click;
+		} mouse;
+	} input;
 } hook_info;
 static hook_info *hook;
-
-
-// Modifiers for tracking key masks.
-static uint16_t current_modifiers = 0x0000;
 
 // For this struct, refer to libxnee, requires Xlibint.h
 typedef union {
@@ -83,14 +93,6 @@ typedef union {
 	xConnSetupPrefix	setup;
 } XRecordDatum;
 
-// Mouse globals.
-static unsigned short int click_count = 0;
-static long int click_time = 0;
-static unsigned short int click_button = MOUSE_NOBUTTON;
-static bool mouse_dragged = false;
-
-// Structure for the current Unix epoch in milliseconds.
-static struct timeval system_time;
 
 // Virtual event pointer.
 static uiohook_event event;
@@ -119,25 +121,24 @@ static inline void dispatch_event(uiohook_event *const event) {
 	}
 }
 
-
 // Set the native modifier mask for future events.
 static inline void set_modifier_mask(uint16_t mask) {
-	current_modifiers |= mask;
+	hook->input.mask |= mask;
 }
 
 // Unset the native modifier mask for future events.
 static inline void unset_modifier_mask(uint16_t mask) {
-	current_modifiers ^= mask;
+	hook->input.mask ^= mask;
 }
 
 // Get the current native modifier mask state.
 static inline uint16_t get_modifiers() {
-	return current_modifiers;
+	return hook->input.mask;
 }
 
 // Initialize the modifier mask to the current modifiers.
 static void initialize_modifiers() {
-	current_modifiers = 0x0000;
+	hook->input.mask = 0x0000;
 
 	KeyCode keycode;
 	char keymap[32];
@@ -200,17 +201,16 @@ static void initialize_modifiers() {
 		if (keymap[keycode / 8] & (1 << (keycode % 8))) { set_modifier_mask(MASK_META_R);	}
 	}
 
-	// FIXME Add check for lock masks!
+	unsigned int led_mask = 0x00;;
+	if (XkbGetIndicatorState(hook->ctrl.display, XkbUseCoreKbd, &led_mask) == Success) {
+		if	(led_mask & 0x01) { set_modifier_mask(MASK_CAPS_LOCK); }
+		if	(led_mask & 0x02) { set_modifier_mask(MASK_NUM_LOCK); }
+		if	(led_mask & 0x04) { set_modifier_mask(MASK_SCROLL_LOCK); }
+	}
 }
 
-
-
 void hook_event_proc(XPointer closeure, XRecordInterceptData *recorded_data) {
-	// Get the local system time in UTC.
-	gettimeofday(&system_time, NULL);
-
-	// Convert the local system time to a Unix epoch in MS.
-	uint64_t timestamp = (system_time.tv_sec * 1000) + (system_time.tv_usec / 1000);
+	uint64_t timestamp = (uint64_t) recorded_data->server_time;
 
 	if (recorded_data->category == XRecordStartOfData) {
 		// Populate the hook start event.
@@ -241,20 +241,30 @@ void hook_event_proc(XPointer closeure, XRecordInterceptData *recorded_data) {
 		if (data->type == KeyPress) {
 			// The X11 KeyCode associated with this event.
 			KeyCode keycode = (KeyCode) data->event.u.u.detail;
-
-			KeySym keysym = keycode_to_keysym(keycode, data->event.u.keyButtonPointer.state);
+            KeySym keysym = 0x00;
+			#if defined(USE_XKBCOMMON)
+			struct xkb_state *state = create_xkb_state(hook->input.context, hook->input.connection);
+		   	if (state != NULL) {
+				keysym = xkb_state_key_get_one_sym(state, keycode);
+			}
+			#else
+			keysym = keycode_to_keysym(keycode, data->event.u.keyButtonPointer.state);
+			#endif
 
 			unsigned short int scancode = keycode_to_scancode(keycode);
 
 			// TODO If you have a better suggestion for this ugly, let me know.
-			if		(scancode == VC_SHIFT_L)	{ set_modifier_mask(MASK_SHIFT_L);	}
-			else if (scancode == VC_SHIFT_R)	{ set_modifier_mask(MASK_SHIFT_R);	}
-			else if (scancode == VC_CONTROL_L)	{ set_modifier_mask(MASK_CTRL_L);	}
-			else if (scancode == VC_CONTROL_R)	{ set_modifier_mask(MASK_CTRL_R);	}
-			else if (scancode == VC_ALT_L)		{ set_modifier_mask(MASK_ALT_L);	}
-			else if (scancode == VC_ALT_R)		{ set_modifier_mask(MASK_ALT_R);	}
-			else if (scancode == VC_META_L)		{ set_modifier_mask(MASK_META_L);	}
-			else if (scancode == VC_META_R)		{ set_modifier_mask(MASK_META_R);	}
+			if		(scancode == VC_SHIFT_L)		{ set_modifier_mask(MASK_SHIFT_L);		}
+			else if (scancode == VC_SHIFT_R)		{ set_modifier_mask(MASK_SHIFT_R);		}
+			else if (scancode == VC_CONTROL_L)		{ set_modifier_mask(MASK_CTRL_L);		}
+			else if (scancode == VC_CONTROL_R)		{ set_modifier_mask(MASK_CTRL_R);		}
+			else if (scancode == VC_ALT_L)			{ set_modifier_mask(MASK_ALT_L);		}
+			else if (scancode == VC_ALT_R)			{ set_modifier_mask(MASK_ALT_R);		}
+			else if (scancode == VC_META_L)			{ set_modifier_mask(MASK_META_L);		}
+			else if (scancode == VC_META_R)			{ set_modifier_mask(MASK_META_R);		}
+			else if (scancode == VC_NUM_LOCK)		{ set_modifier_mask(MASK_NUM_LOCK);		}
+			else if (scancode == VC_CAPS_LOCK)		{ set_modifier_mask(MASK_CAPS_LOCK);	}
+			else if (scancode == VC_SCROLL_LOCK)	{ set_modifier_mask(MASK_SCROLL_LOCK);	}
 
 			// Populate key pressed event.
 			event.time = timestamp;
@@ -280,12 +290,13 @@ void hook_event_proc(XPointer closeure, XRecordInterceptData *recorded_data) {
 
 				// Check to make sure the key is printable.
 				#ifdef USE_XKBCOMMON
-				count = keycode_to_unicode(keycode, buffer, sizeof(buffer) / sizeof(wchar_t));
-				#endif
-
-				if (count == 0) {
-					count = keysym_to_unicode(keysym, buffer, sizeof(buffer) / sizeof(wchar_t));
+				struct xkb_state *state = create_xkb_state(hook->input.context, hook->input.connection);
+				if (state != NULL) {
+					count = keycode_to_unicode(state, keycode, buffer, sizeof(buffer) / sizeof(wchar_t));
 				}
+				#else
+				count = keysym_to_unicode(keysym, buffer, sizeof(buffer) / sizeof(wchar_t));
+				#endif
 
 				for (unsigned int i = 0; i < count; i++) {
 					// Populate key typed event.
@@ -306,22 +317,39 @@ void hook_event_proc(XPointer closeure, XRecordInterceptData *recorded_data) {
 					dispatch_event(&event);
 				}
 			}
+
+			#ifdef USE_XKBCOMMON
+			destroy_xkb_state(state);
+			#endif
 		}
 		else if (data->type == KeyRelease) {
 			// The X11 KeyCode associated with this event.
 			KeyCode keycode = (KeyCode) data->event.u.u.detail;
-			KeySym keysym = keycode_to_keysym(keycode, data->event.u.keyButtonPointer.state);
+			KeySym keysym = 0x00;
+			#if defined(USE_XKBCOMMON)
+			struct xkb_state *state = create_xkb_state(hook->input.context, hook->input.connection);
+			if (state != NULL) {
+				keysym = xkb_state_key_get_one_sym(state, keycode);
+				destroy_xkb_state(state);
+			}
+			#else
+			keysym = keycode_to_keysym(keycode, data->event.u.keyButtonPointer.state);
+			#endif
+
 			unsigned short int scancode = keycode_to_scancode(keycode);
 
 			// TODO If you have a better suggestion for this ugly, let me know.
-			if		(scancode == VC_SHIFT_L)	{ unset_modifier_mask(MASK_SHIFT_L);	}
-			else if (scancode == VC_SHIFT_R)	{ unset_modifier_mask(MASK_SHIFT_R);	}
-			else if (scancode == VC_CONTROL_L)	{ unset_modifier_mask(MASK_CTRL_L);		}
-			else if (scancode == VC_CONTROL_R)	{ unset_modifier_mask(MASK_CTRL_R);		}
-			else if (scancode == VC_ALT_L)		{ unset_modifier_mask(MASK_ALT_L);		}
-			else if (scancode == VC_ALT_R)		{ unset_modifier_mask(MASK_ALT_R);		}
-			else if (scancode == VC_META_L)		{ unset_modifier_mask(MASK_META_L);		}
-			else if (scancode == VC_META_R)		{ unset_modifier_mask(MASK_META_R);		}
+			if		(scancode == VC_SHIFT_L)		{ unset_modifier_mask(MASK_SHIFT_L);		}
+			else if (scancode == VC_SHIFT_R)		{ unset_modifier_mask(MASK_SHIFT_R);		}
+			else if (scancode == VC_CONTROL_L)		{ unset_modifier_mask(MASK_CTRL_L);			}
+			else if (scancode == VC_CONTROL_R)		{ unset_modifier_mask(MASK_CTRL_R);			}
+			else if (scancode == VC_ALT_L)			{ unset_modifier_mask(MASK_ALT_L);			}
+			else if (scancode == VC_ALT_R)			{ unset_modifier_mask(MASK_ALT_R);			}
+			else if (scancode == VC_META_L)			{ unset_modifier_mask(MASK_META_L);			}
+			else if (scancode == VC_META_R)			{ unset_modifier_mask(MASK_META_R);			}
+			else if (scancode == VC_NUM_LOCK)		{ unset_modifier_mask(MASK_NUM_LOCK);		}
+			else if (scancode == VC_CAPS_LOCK)		{ unset_modifier_mask(MASK_CAPS_LOCK);		}
+			else if (scancode == VC_SCROLL_LOCK)	{ unset_modifier_mask(MASK_SCROLL_LOCK);	}
 
 			// Populate key released event.
 			event.time = timestamp;
@@ -342,10 +370,12 @@ void hook_event_proc(XPointer closeure, XRecordInterceptData *recorded_data) {
 		}
 		else if (data->type == ButtonPress) {
 			// X11 handles wheel events as button events.
-			if (data->event.u.u.detail == WheelUp || data->event.u.u.detail == WheelDown) {
+			if (data->event.u.u.detail == WheelUp || data->event.u.u.detail == WheelDown
+					|| data->event.u.u.detail == WheelLeft || data->event.u.u.detail == WheelRight) {
+
 				// Reset the click count and previous button.
-				click_count = 1;
-				click_button = MOUSE_NOBUTTON;
+				hook->input.mouse.click.count = 1;
+				hook->input.mouse.click.button = MOUSE_NOBUTTON;
 
 				/* Scroll wheel release events.
 				 * Scroll type: WHEEL_UNIT_SCROLL
@@ -361,7 +391,7 @@ void hook_event_proc(XPointer closeure, XRecordInterceptData *recorded_data) {
 				event.type = EVENT_MOUSE_WHEEL;
 				event.mask = get_modifiers();
 
-				event.data.wheel.clicks = click_count;
+				event.data.wheel.clicks = hook->input.mouse.click.count;
 				event.data.wheel.x = data->event.u.keyButtonPointer.rootX;
 				event.data.wheel.y = data->event.u.keyButtonPointer.rootY;
 
@@ -392,7 +422,7 @@ void hook_event_proc(XPointer closeure, XRecordInterceptData *recorded_data) {
 				 */
 				event.data.wheel.amount = 3;
 
-				if (data->event.u.u.detail == WheelUp) {
+				if (data->event.u.u.detail == WheelUp || data->event.u.u.detail == WheelLeft) {
 					// Wheel Rotated Up and Away.
 					event.data.wheel.rotation = -1;
 				}
@@ -401,10 +431,20 @@ void hook_event_proc(XPointer closeure, XRecordInterceptData *recorded_data) {
 					event.data.wheel.rotation = 1;
 				}
 
-				logger(LOG_LEVEL_INFO,	"%s [%u]: Mouse wheel type %u, rotated %i units at %u, %u.\n",
+				if (data->event.u.u.detail == WheelUp || data->event.u.u.detail == WheelDown) {
+					// Wheel Rotated Up or Down.
+					event.data.wheel.direction = WHEEL_VERTICAL_DIRECTION;
+				}
+				else { // data->event.u.u.detail == WheelLeft || data->event.u.u.detail == WheelRight
+					// Wheel Rotated Left or Right.
+					event.data.wheel.direction = WHEEL_HORIZONTAL_DIRECTION;
+				}
+
+				logger(LOG_LEVEL_INFO,	"%s [%u]: Mouse wheel type %u, rotated %i units in the %u direction at %u, %u.\n",
 						__FUNCTION__, __LINE__, event.data.wheel.type,
 						event.data.wheel.amount * event.data.wheel.rotation,
-						event.data.wheel.x, event.data.wheel.y );
+                        event.data.wheel.direction,
+						event.data.wheel.x, event.data.wheel.y);
 
 				// Fire mouse wheel event.
 				dispatch_event(&event);
@@ -448,9 +488,9 @@ void hook_event_proc(XPointer closeure, XRecordInterceptData *recorded_data) {
 
 
 				// Track the number of clicks, the button must match the previous button.
-				if (button == click_button && (long int) (timestamp - click_time) <= hook_get_multi_click_time()) {
-					if (click_count < USHRT_MAX) {
-						click_count++;
+				if (button == hook->input.mouse.click.button && (long int) (timestamp - hook->input.mouse.click.time) <= hook_get_multi_click_time()) {
+					if (hook->input.mouse.click.count < USHRT_MAX) {
+						hook->input.mouse.click.count++;
 					}
 					else {
 						logger(LOG_LEVEL_WARN, "%s [%u]: Click count overflow detected!\n",
@@ -459,14 +499,14 @@ void hook_event_proc(XPointer closeure, XRecordInterceptData *recorded_data) {
 				}
 				else {
 					// Reset the click count.
-					click_count = 1;
+					hook->input.mouse.click.count = 1;
 
 					// Set the previous button.
-					click_button = button;
+					hook->input.mouse.click.button = button;
 				}
 
-				// Save this events time to calculate the click_count.
-				click_time = timestamp;
+				// Save this events time to calculate the hook->input.mouse.click.count.
+				hook->input.mouse.click.time = timestamp;
 
 
 				// Populate mouse pressed event.
@@ -477,7 +517,7 @@ void hook_event_proc(XPointer closeure, XRecordInterceptData *recorded_data) {
 				event.mask = get_modifiers();
 
 				event.data.mouse.button = button;
-				event.data.mouse.clicks = click_count;
+				event.data.mouse.clicks = hook->input.mouse.click.count;
 				event.data.mouse.x = data->event.u.keyButtonPointer.rootX;
 				event.data.mouse.y = data->event.u.keyButtonPointer.rootY;
 
@@ -549,7 +589,7 @@ void hook_event_proc(XPointer closeure, XRecordInterceptData *recorded_data) {
 				event.mask = get_modifiers();
 
 				event.data.mouse.button = button;
-				event.data.mouse.clicks = click_count;
+				event.data.mouse.clicks = hook->input.mouse.click.count;
 				event.data.mouse.x = data->event.u.keyButtonPointer.rootX;
 				event.data.mouse.y = data->event.u.keyButtonPointer.rootY;
 
@@ -575,7 +615,7 @@ void hook_event_proc(XPointer closeure, XRecordInterceptData *recorded_data) {
 				dispatch_event(&event);
 
 				// If the pressed event was not consumed...
-				if (event.reserved ^ 0x01 && mouse_dragged != true) {
+				if (event.reserved ^ 0x01 && hook->input.mouse.is_dragged != true) {
 					// Populate mouse clicked event.
 					event.time = timestamp;
 					event.reserved = 0x00;
@@ -584,7 +624,7 @@ void hook_event_proc(XPointer closeure, XRecordInterceptData *recorded_data) {
 					event.mask = get_modifiers();
 
 					event.data.mouse.button = button;
-					event.data.mouse.clicks = click_count;
+					event.data.mouse.clicks = hook->input.mouse.click.count;
 					event.data.mouse.x = data->event.u.keyButtonPointer.rootX;
 					event.data.mouse.y = data->event.u.keyButtonPointer.rootY;
 
@@ -611,16 +651,16 @@ void hook_event_proc(XPointer closeure, XRecordInterceptData *recorded_data) {
 				}
 
 				// Reset the number of clicks.
-				if (button == click_button && (long int) (event.time - click_time) > hook_get_multi_click_time()) {
+				if (button == hook->input.mouse.click.button && (long int) (event.time - hook->input.mouse.click.time) > hook_get_multi_click_time()) {
 					// Reset the click count.
-					click_count = 0;
+					hook->input.mouse.click.count = 0;
 				}
 			}
 		}
 		else if (data->type == MotionNotify) {
 			// Reset the click count.
-			if (click_count != 0 && (long int) (timestamp - click_time) > hook_get_multi_click_time()) {
-				click_count = 0;
+			if (hook->input.mouse.click.count != 0 && (long int) (timestamp - hook->input.mouse.click.time) > hook_get_multi_click_time()) {
+				hook->input.mouse.click.count = 0;
 			}
 			
 			// Populate mouse move event.
@@ -631,8 +671,8 @@ void hook_event_proc(XPointer closeure, XRecordInterceptData *recorded_data) {
 
 			// Check the upper half of virtual modifiers for non-zero
 			// values and set the mouse dragged flag.
-			mouse_dragged = (event.mask >> 8 > 0);
-			if (mouse_dragged) {
+			hook->input.mouse.is_dragged = (event.mask >> 8 > 0);
+			if (hook->input.mouse.is_dragged) {
 				// Create Mouse Dragged event.
 				event.type = EVENT_MOUSE_DRAGGED;
 			}
@@ -642,7 +682,7 @@ void hook_event_proc(XPointer closeure, XRecordInterceptData *recorded_data) {
 			}
 
 			event.data.mouse.button = MOUSE_NOBUTTON;
-			event.data.mouse.clicks = click_count;
+			event.data.mouse.clicks = hook->input.mouse.click.count;
 			event.data.mouse.x = data->event.u.keyButtonPointer.rootX;
 			event.data.mouse.y = data->event.u.keyButtonPointer.rootY;
 
@@ -660,7 +700,7 @@ void hook_event_proc(XPointer closeure, XRecordInterceptData *recorded_data) {
 			#endif
 
 			logger(LOG_LEVEL_INFO,	"%s [%u]: Mouse %s to %i, %i. (%#X)\n",
-					__FUNCTION__, __LINE__, mouse_dragged ? "dragged" : "moved",
+					__FUNCTION__, __LINE__, hook->input.mouse.is_dragged ? "dragged" : "moved",
 					event.data.mouse.x, event.data.mouse.y, event.mask);
 
 			// Fire mouse move event.
@@ -770,7 +810,7 @@ static inline int xrecord_block() {
 	return status;
 }
 
-static inline int xrecord_alloc() {
+static int xrecord_alloc() {
 	int status = UIOHOOK_FAILURE;
 
 	// Make sure the data display is synchronized to prevent late event delivery!
@@ -780,12 +820,12 @@ static inline int xrecord_alloc() {
 
 	// Setup XRecord range.
 	XRecordClientSpec clients = XRecordAllClients;
+
 	hook->data.range = XRecordAllocRange();
 	if (hook->data.range != NULL) {
 		logger(LOG_LEVEL_DEBUG,	"%s [%u]: XRecordAllocRange successful.\n",
 				__FUNCTION__, __LINE__);
 
-		// Create XRecord Context.
 		hook->data.range->device_events.first = KeyPress;
 		hook->data.range->device_events.last = MotionNotify;
 
@@ -811,7 +851,7 @@ static inline int xrecord_alloc() {
 			status = UIOHOOK_ERROR_X_RECORD_CREATE_CONTEXT;
 		}
 
-		// Free the XRecord range if it was set.
+		// Free the XRecord range.
 		XFree(hook->data.range);
 	}
 	else {
@@ -825,7 +865,7 @@ static inline int xrecord_alloc() {
 	return status;
 }
 
-static inline int xrecord_query() {
+static int xrecord_query() {
 	int status = UIOHOOK_FAILURE;
 
 	// Check to make sure XRecord is installed and enabled.
@@ -846,7 +886,7 @@ static inline int xrecord_query() {
 	return status;
 }
 
-static inline int xrecord_start() {
+static int xrecord_start() {
 	int status = UIOHOOK_FAILURE;
 
 	// Open the control display for XRecord.
@@ -869,10 +909,44 @@ static inline int xrecord_start() {
 					__FUNCTION__, __LINE__);
 		}
 
+		 #if defined(USE_XKBCOMMON)
+		// Open XCB Connection
+		hook->input.connection = XGetXCBConnection(hook->ctrl.display);
+		int xcb_status = xcb_connection_has_error(hook->input.connection);
+		if (xcb_status <= 0) {
+			// Initialize xkbcommon context.
+			struct xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+
+			if (context != NULL) {
+				hook->input.context = xkb_context_ref(context);
+			}
+			else {
+				logger(LOG_LEVEL_ERROR,	"%s [%u]: xkb_context_new failure!\n",
+						__FUNCTION__, __LINE__);
+			}
+		}
+		else {
+			logger(LOG_LEVEL_ERROR,	"%s [%u]: xcb_connect failure! (%d)\n",
+					__FUNCTION__, __LINE__, xcb_status);
+		}
+		#endif
+
 		// Initialize starting modifiers.
 		initialize_modifiers();
 
 		status = xrecord_query();
+
+		#ifdef USE_XKBCOMMON
+		if (hook->input.context != NULL) {
+			xkb_context_unref(hook->input.context);
+			hook->input.context = NULL;
+		}
+
+		if (hook->input.connection != NULL) {
+			xcb_disconnect(hook->input.connection);
+			hook->input.connection = NULL;
+		}
+		#endif
 	}
 	else {
 		logger(LOG_LEVEL_ERROR,	"%s [%u]: XOpenDisplay failure!\n",
@@ -902,6 +976,12 @@ UIOHOOK_API int hook_run() {
 	// Hook data for future cleanup.
 	hook = malloc(sizeof(hook_info));
 	if (hook != NULL) {
+		hook->input.mask = 0x0000;
+		hook->input.mouse.is_dragged = false;
+		hook->input.mouse.click.count = 0;
+		hook->input.mouse.click.time = 0;
+		hook->input.mouse.click.button = MOUSE_NOBUTTON;
+
 		status = xrecord_start();
 
 		// Free data associated with this hook.

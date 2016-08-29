@@ -1,5 +1,5 @@
 /* libUIOHook: Cross-platfrom userland keyboard and mouse hooking.
- * Copyright (C) 2006-2015 Alexander Barker.  All Rights Received.
+ * Copyright (C) 2006-2016 Alexander Barker.  All Rights Received.
  * https://github.com/kwhat/libuiohook/
  *
  * libUIOHook is free software: you can redistribute it and/or modify
@@ -78,6 +78,14 @@ typedef enum _event_type {
 	EVENT_MOUSE_WHEEL
 } event_type;
 
+typedef struct _screen_data {
+	uint8_t number;
+	int16_t x;
+	int16_t y;
+	uint16_t width;
+	uint16_t height;
+} screen_data;
+
 typedef struct _keyboard_event_data {
 	uint16_t keycode;
 	uint16_t rawcode;
@@ -101,9 +109,10 @@ typedef struct _mouse_wheel_event_data {
 	uint16_t clicks;
 	int16_t x;
 	int16_t y;
-	uint16_t type;
+	uint8_t type;
 	uint16_t amount;
 	int16_t rotation;
+	uint8_t direction;
 } mouse_wheel_event_data;
 
 typedef struct _uiohook_event {
@@ -220,7 +229,7 @@ typedef void (*dispatcher_t)(uiohook_event *const);
 
 #define VC_PRINTSCREEN							0x0E37
 #define VC_SCROLL_LOCK							0x0046
-#define VC_PAUSE								0x0E45	// FIXME Testing needed on Windows!
+#define VC_PAUSE								0x0E45
 
 
 // Begin Edit Key Zone
@@ -236,6 +245,7 @@ typedef void (*dispatcher_t)(uiohook_event *const);
 // Begin Cursor Key Zone
 #define VC_UP									0xE048
 #define VC_LEFT									0xE04B
+#define VC_CLEAR								0xE04C
 #define VC_RIGHT								0xE04D
 #define VC_DOWN									0xE050
 // End Cursor Key Zone
@@ -261,6 +271,18 @@ typedef void (*dispatcher_t)(uiohook_event *const);
 #define VC_KP_8									0x0048
 #define VC_KP_9									0x0049
 #define VC_KP_0									0x0052
+
+#define VC_KP_END								0xEE00 | VC_KP_1
+#define VC_KP_DOWN								0xEE00 | VC_KP_2
+#define VC_KP_PAGE_DOWN							0xEE00 | VC_KP_3
+#define VC_KP_LEFT								0xEE00 | VC_KP_4
+#define VC_KP_CLEAR								0xEE00 | VC_KP_5
+#define VC_KP_RIGHT								0xEE00 | VC_KP_6
+#define VC_KP_HOME								0xEE00 | VC_KP_7
+#define VC_KP_UP								0xEE00 | VC_KP_8
+#define VC_KP_PAGE_UP							0xEE00 | VC_KP_9
+#define VC_KP_INSERT							0xEE00 | VC_KP_0
+#define VC_KP_DELETE							0xEE00 | VC_KP_SEPARATOR
 // End Numeric Zone
 
 
@@ -359,6 +381,10 @@ typedef void (*dispatcher_t)(uiohook_event *const);
 #define MASK_BUTTON3							1 << 10
 #define MASK_BUTTON4							1 << 11
 #define MASK_BUTTON5							1 << 12
+
+#define MASK_NUM_LOCK							1 << 13
+#define MASK_CAPS_LOCK							1 << 14
+#define MASK_SCROLL_LOCK						1 << 15
 /* End Virtual Modifier Masks */
 
 
@@ -372,6 +398,9 @@ typedef void (*dispatcher_t)(uiohook_event *const);
 
 #define WHEEL_UNIT_SCROLL						1
 #define WHEEL_BLOCK_SCROLL						2
+
+#define WHEEL_VERTICAL_DIRECTION				3
+#define WHEEL_HORIZONTAL_DIRECTION              4
 /* End Virtual Mouse Buttons */
 
 
@@ -399,6 +428,9 @@ extern "C" {
 
 	// Withdraw the event hook.
 	UIOHOOK_API int hook_stop();
+
+	// Retrieves an array of screen data for each available monitor.
+	UIOHOOK_API screen_data* hook_create_screen_info(unsigned char *count);
 
 	// Retrieves the keyboard auto repeat rate.
 	UIOHOOK_API long int hook_get_auto_repeat_rate();

@@ -1,5 +1,5 @@
 /* libUIOHook: Cross-platfrom userland keyboard and mouse hooking.
- * Copyright (C) 2006-2015 Alexander Barker.  All Rights Received.
+ * Copyright (C) 2006-2016 Alexander Barker.  All Rights Received.
  * https://github.com/kwhat/libuiohook/
  *
  * libUIOHook is free software: you can redistribute it and/or modify
@@ -23,6 +23,7 @@
 #ifndef USE_WEAK_IMPORT
 #include <dlfcn.h>
 #endif
+#include <mach/mach_time.h>
 #ifdef USE_OBJC
 #include <objc/objc.h>
 #include <objc/objc-runtime.h>
@@ -181,7 +182,12 @@ static void initialize_modifiers() {
 		set_modifier_mask(MASK_BUTTON5);
 	}
 
-	// FIXME Add check for lock masks!
+	if (CGEventSourceFlagsState(kCGEventFlagMaskAlphaShift)) {
+		set_modifier_mask(MASK_CAPS_LOCK);
+	}
+	// Best I can tell, OS X does not support Num or Scroll lock.
+	unset_modifier_mask(MASK_NUM_LOCK);
+	unset_modifier_mask(MASK_SCROLL_LOCK);
 }
 
 
@@ -315,11 +321,7 @@ static void stop_message_port_runloop() {
 #endif
 
 static void hook_status_proc(CFRunLoopObserverRef observer, CFRunLoopActivity activity, void *info) {
-	// Get the local system time in UTC.
-	gettimeofday(&system_time, NULL);
-
-	// Convert the local system time to a Unix epoch in MS.
-	uint64_t timestamp = (system_time.tv_sec * 1000) + (system_time.tv_usec / 1000);
+	uint64_t timestamp = mach_absolute_time();
 
 	switch (activity) {
 		case kCFRunLoopEntry:
@@ -907,7 +909,8 @@ static inline void process_mouse_wheel(uint64_t timestamp, CGEventRef event_ref)
 	// Check to see what axis was rotated, we only care about axis 1 for vertical rotation.
 	// TODO Implement horizontal scrolling by examining axis 2.
 	// NOTE kCGScrollWheelEventDeltaAxis3 is currently unused.
-	if (CGEventGetIntegerValueField(event_ref, kCGScrollWheelEventDeltaAxis1) != 0) {
+	if (CGEventGetIntegerValueField(event_ref, kCGScrollWheelEventDeltaAxis1) != 0
+			|| CGEventGetIntegerValueField(event_ref, kCGScrollWheelEventDeltaAxis2) != 0) {
 		CGPoint event_point = CGEventGetLocation(event_ref);
 
 		// Populate mouse wheel event.
@@ -940,8 +943,19 @@ static inline void process_mouse_wheel(uint64_t timestamp, CGEventRef event_ref)
 		// Scrolling data uses a fixed-point 16.16 signed integer format (Ex: 1.0 = 0x00010000).
 		event.data.wheel.rotation = CGEventGetIntegerValueField(event_ref, kCGScrollWheelEventDeltaAxis1) * -1;
 
-		logger(LOG_LEVEL_INFO,	"%s [%u]: Mouse wheel type %u, rotated %i units at %u, %u.\n",
-				__FUNCTION__, __LINE__, event.data.wheel.type, event.data.wheel.amount * event.data.wheel.rotation,
+		if (CGEventGetIntegerValueField(event_ref, kCGScrollWheelEventDeltaAxis1) != 0) {
+			// Wheel Rotated Up or Down.
+			event.data.wheel.direction = WHEEL_VERTICAL_DIRECTION;
+		}
+		else { // data->event.u.u.detail == WheelLeft || data->event.u.u.detail == WheelRight
+			// Wheel Rotated Left or Right.
+			event.data.wheel.direction = WHEEL_HORIZONTAL_DIRECTION;
+		}
+
+		logger(LOG_LEVEL_INFO,	"%s [%u]: Mouse wheel type %u, rotated %i units in the %u direction at %u, %u.\n",
+				__FUNCTION__, __LINE__, event.data.wheel.type,
+				event.data.wheel.amount * event.data.wheel.rotation,
+				event.data.wheel.direction,
 				event.data.wheel.x, event.data.wheel.y);
 
 		// Fire mouse wheel event.
@@ -953,8 +967,8 @@ CGEventRef hook_event_proc(CGEventTapProxy tap_proxy, CGEventType type, CGEventR
 	// Get the local system time in UTC.
 	gettimeofday(&system_time, NULL);
 
-	// Convert the local system time to a Unix epoch in MS.
-	uint64_t timestamp = (system_time.tv_sec * 1000) + (system_time.tv_usec / 1000);
+	// Grab the native event timestap for use later..
+	uint64_t timestamp = (uint64_t) CGEventGetTimestamp(event_ref);
 
 	// Get the event class.
 	switch (type) {

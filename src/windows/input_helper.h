@@ -1,5 +1,5 @@
 /* libUIOHook: Cross-platfrom userland keyboard and mouse hooking.
- * Copyright (C) 2006-2015 Alexander Barker.  All Rights Received.
+ * Copyright (C) 2006-2016 Alexander Barker.  All Rights Received.
  * https://github.com/kwhat/libuiohook/
  *
  * libUIOHook is free software: you can redistribute it and/or modify
@@ -53,9 +53,13 @@ typedef BOOL (WINAPI *LPFN_ISWOW64PROCESS) (HANDLE, PBOOL);
 
 typedef void* (CALLBACK *KbdLayerDescriptor) (VOID);
 
-#define CAPLOK		0x01
-#define WCH_NONE	0xF000
-#define WCH_DEAD	0xF001
+#define CAPLOK			0x01
+#define WCH_NONE		0xF000
+#define WCH_DEAD		0xF001
+
+#ifndef WM_MOUSEHWHEEL
+#define WM_MOUSEHWHEEL	0x020E
+#endif
 
 typedef struct _VK_TO_WCHARS {
 	BYTE VirtualKey;
@@ -126,7 +130,7 @@ extern SIZE_T keycode_to_unicode(DWORD keycode, PWCHAR buffer, SIZE_T size);
 
 //extern DWORD unicode_to_keycode(wchar_t unicode);
 
-extern unsigned short keycode_to_scancode(DWORD vk_code);
+extern unsigned short keycode_to_scancode(DWORD vk_code, DWORD flags);
 
 extern DWORD scancode_to_keycode(unsigned short scancode);
 
