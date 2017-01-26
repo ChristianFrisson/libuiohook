@@ -48,6 +48,7 @@ static bool is_caps_lock = false, is_shift_lock = false;
 #include <xkbcommon/xkbcommon-x11.h>
 
 #ifdef USE_XKBFILE
+#include <X11/extensions/XKBstr.h>
 #include <X11/extensions/XKBrules.h>
 
 static struct xkb_rule_names xkb_names = {
