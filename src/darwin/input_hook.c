@@ -377,7 +377,7 @@ static inline void process_key_pressed(uint64_t timestamp, CGEventRef event_ref)
 
 	// If the pressed event was not consumed...
 	if (event.reserved ^ 0x01) {
-		tis_message->event = event_ref;
+        /*tis_message->event = event_ref;
 		tis_message->length = 0;
 		bool is_runloop_main = CFEqual(event_loop, CFRunLoopGetMain());
 		
@@ -453,7 +453,45 @@ static inline void process_key_pressed(uint64_t timestamp, CGEventRef event_ref)
 
 			// Populate key typed event.
 			dispatch_event(&event);
-		}
+        }*/
+        /// From https://github.com/kwhat/libuiohook/issues/26
+        UniChar *buffer = malloc(sizeof(UniChar) * 2);
+        __block UniCharCount length;
+
+        if (CFEqual(CFRunLoopGetCurrent(), CFRunLoopGetMain())) {
+            // If the hook is running on the main runloop, we do not need to do
+            // all of this signaling junk.
+            length = keycode_to_unicode(event_ref, buffer, 2);
+        }
+        else {
+            //#ifdef __BLOCKS__
+            dispatch_sync(dispatch_get_main_queue(), ^{
+                              length = keycode_to_unicode(event_ref, buffer, 2);
+                          });
+        }
+
+        for (unsigned int i = 0; i < length; i++) {
+            // Populate key typed event.
+            event.time = timestamp;
+            event.reserved = 0x00;
+
+            event.type = EVENT_KEY_TYPED;
+            event.mask = get_modifiers();
+
+            event.data.keyboard.keycode = VC_UNDEFINED;
+            event.data.keyboard.rawcode = keycode;
+            event.data.keyboard.keychar = buffer[i];
+
+            logger(LOG_LEVEL_INFO,  "%s [%u]: Key %#X typed. (%lc)\n",
+                   __FUNCTION__, __LINE__, event.data.keyboard.keycode,
+                   (wint_t) event.data.keyboard.keychar);
+
+            // Populate key typed event.
+            dispatch_event(&event);
+        }
+
+        free(buffer);
+
 	}
 }
 
